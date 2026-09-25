@@ -29,6 +29,7 @@ def query_model(agent_name, model_id, prompt, is_moderator=False, max_retries=5)
     if is_moderator and "gemini" in model_id.lower():
         kwargs["tools"] = [{"googleSearch": {}}]
         
+    last_error_msg = ""
     for attempt in range(max_retries):
         try:
             response = completion(**kwargs)
@@ -36,11 +37,13 @@ def query_model(agent_name, model_id, prompt, is_moderator=False, max_retries=5)
             content = msg.content or getattr(msg, 'reasoning_content', None) or getattr(msg, 'reasoning', None)
             return agent_name, content or "[Empty response]"
         except Exception as e:
-            if any(err in str(e).lower() for err in ["503", "429", "timeout", "connection"]):
+            last_error_msg = str(e)
+            if any(err in last_error_msg.lower() for err in ["503", "429", "timeout", "connection"]):
                 time.sleep(5 + (attempt * 5))
             else:
-                return agent_name, f"[API Error: {str(e)}]"
-    return agent_name, f"[API Error: Failed after 5 retries. Last error: {str(e)}]"
+                return agent_name, f"[API Error: {last_error_msg}]"
+                
+    return agent_name, f"[API Error: Failed after 5 retries. Last error: {last_error_msg}]"
 
 # UI Setup
 st.set_page_config(page_title="AI Roundtable", page_icon="🤖", layout="centered")
