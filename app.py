@@ -12,7 +12,7 @@ SPOKE_MODELS = {
     "Groq_Large": "groq/openai/gpt-oss-120b",
     "Gemini": "gemini/gemini-3.5-flash-lite"
 }
-MODERATOR_MODEL = "groq/llama-3.3-70b-versatile"
+MODERATOR_MODEL = "groq/openai/gpt-oss-120b"
 
 def fetch_web_facts(query):
     """Safely fetch live web snippets without breaking indentation or crashing."""
@@ -103,8 +103,8 @@ def run_live_round(prompt, round_title):
     return results
 
 def get_author_label(model_id):
-    if "llama-3.3-70b" in model_id.lower():
-        return "⚡ Groq Llama-3.3-70B (with Live DuckDuckGo Search)"
+    if "gpt-oss-120b" in model_id.lower():
+        return "⚡ Groq GPT-OSS-120B (with Live DuckDuckGo Search)"
     elif "gemini" in model_id.lower():
         return "🤖 Gemini 3.5 Flash Lite"
     else:
