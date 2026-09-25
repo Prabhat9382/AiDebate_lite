@@ -8,11 +8,11 @@ os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
 os.environ["GROQ_API_KEY"] = st.secrets["GROQ_API_KEY"]
 
 SPOKE_MODELS = {
-    "Gemini": "gemini/gemini-1.5-flash",                 
+    "Gemini": "gemini/gemini-1.5-flash-latest",                 
     "Groq_Fast": "groq/openai/gpt-oss-20b",                        
     "Groq_Large": "groq/openai/gpt-oss-120b"          
 }
-MODERATOR_MODEL = "gemini/gemini-1.5-flash"
+MODERATOR_MODEL = "gemini/gemini-1.5-flash-latest"
 
 def query_model(agent_name, model_id, prompt, is_moderator=False, max_retries=5):
     if is_moderator:
