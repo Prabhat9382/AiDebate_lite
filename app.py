@@ -15,22 +15,23 @@ SPOKE_MODELS = {
 MODERATOR_MODEL = "groq/openai/gpt-oss-120b"
 
 def fetch_web_facts(query):
-    """Safely fetch live web snippets without breaking indentation or crashing."""
+    """Fetches deep factual context using Tavily Search API, bypassing cloud IP blocks."""
     try:
-        from duckduckgo_search import DDGS
-        results = DDGS().text(query, max_results=4)
-        if results:
-            return "\n".join([f"- {res.get('body', '')}" for res in results])
-    except Exception:
+        from tavily import TavilyClient
+        client = TavilyClient(api_key=st.secrets["TAVILY_API_KEY"])
+        # Tavily handles conversational queries natively—no LLM middleman needed
+        response = client.search(query=query, search_depth="basic", max_results=3)
+        if response.get("results"):
+            return "\n\n".join([f"Source: {res['url']}\nContent: {res['content']}" for res in response["results"]])
+    except Exception as e:
         pass
     return "No live web data available."
 
 def query_model(agent_name, model_id, prompt, is_moderator=False, max_retries=5):
     if is_moderator:
-        # NEW: Explicitly breaking the Persona Trap so it never hallucinates missing data
         sys_content = (
             "You are the final, objective Fact-Checking Judge. Evaluate the evidence strictly against the provided Live Web Facts. "
-            "CRITICAL: If Live Web Facts say 'No live web data available' or do not specify exact technical numbers, DO NOT invent or guess technical specifications. "
+            "CRITICAL: If Live Web Facts say 'No live web data available' or lack exact technical numbers, DO NOT invent or guess specs. "
             "Acknowledge that verified specs were unavailable rather than assuming them. Synthesize only verified facts."
         )
     else:
@@ -74,27 +75,6 @@ def query_model(agent_name, model_id, prompt, is_moderator=False, max_retries=5)
     return agent_name, f"[API Error: Failed after 5 retries. Last error: {last_error_msg}]", model_id
 
 
-def generate_search_query(user_topic, human_input=""):
-    """NEW AGENT: Uses a fast LLM to extract clean search keywords from messy human text."""
-    prompt = (
-        f"Topic: '{user_topic}'\n"
-        f"Human input: '{human_input}'\n\n"
-        "Task: Extract 3 to 4 precise technical keywords for a search engine to fact-check this topic. "
-        "CRITICAL: Keep product model names perfectly intact with spaces and hyphens (e.g., 'Sony HT-S40R'). "
-        "Drop all conversational words like 'worth', 'upgrade', or 'reliability'. Add the word 'specifications'.\n"
-        "Example Output: Sony HT-S40R vs HT-S20R specifications\n\n"
-        "Output ONLY the keywords. Do not write any other text."
-    )
-    # Using Groq Fast for instant keyword extraction (takes < 0.5 seconds)
-    _, clean_query, _ = query_model("QueryExtractor", "groq/openai/gpt-oss-20b", prompt, is_moderator=False)
-    
-    clean_query = clean_query.strip().replace('"', '').replace("'", "")
-    # Safety fallback if the model fails
-    if "API Error" in clean_query or not clean_query:
-        return user_topic[:50] 
-    return clean_query
-
-
 # UI Setup
 st.set_page_config(page_title="AI Roundtable", page_icon="🤖", layout="centered")
 st.title("🤖 Multi-Model AI Roundtable")
@@ -131,7 +111,7 @@ def run_live_round(prompt, round_title):
 
 def get_author_label(model_id):
     if "gpt-oss-120b" in model_id.lower():
-        return "⚡ Groq GPT-OSS-120B (with Agentic Web Search)"
+        return "⚡ Groq GPT-OSS-120B (with Tavily Search API)"
     elif "gemini" in model_id.lower():
         return "🤖 Gemini 3.5 Flash Lite"
     else:
@@ -156,12 +136,8 @@ elif not st.session_state.final_verdict:
     r2_results = run_live_round(round2_prompt, "⚔️ Round 2: Cross-Critique")
         
     with st.chat_message("assistant"):
-        # NEW: The Query Extractor Agent runs first
-        with st.spinner("🔍 Agent is extracting clean search keywords..."):
-            smart_query = generate_search_query(st.session_state.topic)
-            
-        with st.spinner(f"⚖️ Moderator is fact-checking '{smart_query}' & synthesizing..."):
-            live_facts = fetch_web_facts(smart_query)
+        with st.spinner(f"⚖️ Moderator is fact-checking '{st.session_state.topic}' & synthesizing..."):
+            live_facts = fetch_web_facts(st.session_state.topic)
             
             synthesis_prompt = f"Topic: {st.session_state.topic}\nLive Web Facts:\n{live_facts}\n\nRound 2 Arguments:\n"
             stance_labels = ["Stance A", "Stance B", "Stance C"]
@@ -172,9 +148,7 @@ elif not st.session_state.final_verdict:
             _, verdict, actual_model = query_model("Moderator", MODERATOR_MODEL, synthesis_prompt, is_moderator=True)
             
             author_label = get_author_label(actual_model)
-            
-            # NEW: Prints the exact search keywords the AI extracted so you can verify it worked
-            final_display = f"### ⚖️ Collective Verdict\n*(Written by {author_label})*\n\n**🔍 Search Query Used:** `{smart_query}`\n\n{verdict}"
+            final_display = f"### ⚖️ Collective Verdict\n*(Written by {author_label})*\n\n{verdict}"
             
             st.markdown(final_display)
             st.session_state.history.append({"role": "assistant", "content": final_display})
@@ -193,12 +167,9 @@ else:
         feedback_results = run_live_round(feedback_prompt, "🔄 Models Evaluating Feedback")
             
         with st.chat_message("assistant"):
-            # NEW: Agent runs again on the follow-up question
-            with st.spinner("🔍 Agent is extracting clean search keywords..."):
-                smart_query = generate_search_query(st.session_state.topic, user_input)
-                
-            with st.spinner(f"⚖️ Moderator is fact-checking '{smart_query}' & updating verdict..."):
-                live_facts = fetch_web_facts(smart_query)
+            with st.spinner(f"⚖️ Moderator is searching web & updating verdict..."):
+                search_query = f"{st.session_state.topic} {user_input}"
+                live_facts = fetch_web_facts(search_query)
                 
                 new_synth_prompt = f"Topic: {st.session_state.topic}\nHuman's Argument: {user_input}\nLive Web Facts:\n{live_facts}\n\nModels' Responses:\n"
                 stance_labels = ["Stance A", "Stance B", "Stance C"]
@@ -209,7 +180,7 @@ else:
                 _, new_verdict, actual_model = query_model("Moderator", MODERATOR_MODEL, new_synth_prompt, is_moderator=True)
                 
                 author_label = get_author_label(actual_model)
-                updated_display = f"### ⚖️ Updated Collective Verdict\n*(Written by {author_label})*\n\n**🔍 Search Query Used:** `{smart_query}`\n\n{new_verdict}"
+                updated_display = f"### ⚖️ Updated Collective Verdict\n*(Written by {author_label})*\n\n{new_verdict}"
                 
                 st.markdown(updated_display)
                 st.session_state.history.append({"role": "assistant", "content": updated_display})
