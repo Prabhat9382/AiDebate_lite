@@ -79,8 +79,11 @@ def generate_search_query(user_topic, human_input=""):
     prompt = (
         f"Topic: '{user_topic}'\n"
         f"Human input: '{human_input}'\n\n"
-        "Task: Extract 3 to 5 precise keywords for a search engine to fact-check this topic. "
-        "Output ONLY the keywords, separated by spaces. Do not write any other text."
+        "Task: Extract 3 to 4 precise technical keywords for a search engine to fact-check this topic. "
+        "CRITICAL: Keep product model names perfectly intact with spaces and hyphens (e.g., 'Sony HT-S40R'). "
+        "Drop all conversational words like 'worth', 'upgrade', or 'reliability'. Add the word 'specifications'.\n"
+        "Example Output: Sony HT-S40R vs HT-S20R specifications\n\n"
+        "Output ONLY the keywords. Do not write any other text."
     )
     # Using Groq Fast for instant keyword extraction (takes < 0.5 seconds)
     _, clean_query, _ = query_model("QueryExtractor", "groq/openai/gpt-oss-20b", prompt, is_moderator=False)
