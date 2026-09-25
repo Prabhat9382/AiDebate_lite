@@ -40,7 +40,7 @@ def query_model(agent_name, model_id, prompt, is_moderator=False, max_retries=5)
                 time.sleep(5 + (attempt * 5))
             else:
                 return agent_name, f"[API Error: {str(e)}]"
-    return agent_name, "[API Error: Failed]"
+    return agent_name, f"[API Error: Failed after 5 retries. Last error: {str(e)}]"
 
 # UI Setup
 st.set_page_config(page_title="AI Roundtable", page_icon="🤖", layout="centered")
