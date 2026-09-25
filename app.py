@@ -161,7 +161,7 @@ else:
             
         with st.chat_message("assistant"):
             with st.spinner("⚖️ Moderator is searching web & updating verdict..."):
-                search_query = f"{st.session_state.topic} {user_input}"
+                search_query = f"{st.session_state.topic} specifications"
                 live_facts = fetch_web_facts(search_query)
                 
                 new_synth_prompt = f"Topic: {st.session_state.topic}\nHuman's Argument: {user_input}\nLive Web Facts:\n{live_facts}\n\nModels' Responses:\n"
