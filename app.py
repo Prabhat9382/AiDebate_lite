@@ -8,11 +8,11 @@ os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
 os.environ["GROQ_API_KEY"] = st.secrets["GROQ_API_KEY"]
 
 SPOKE_MODELS = {
-    "Gemini": "gemini/gemini-3.5-flash-lite",                 
+    "Gemini": "gemini/gemini-1.5-flash",                 
     "Groq_Fast": "groq/openai/gpt-oss-20b",                        
     "Groq_Large": "groq/openai/gpt-oss-120b"          
 }
-MODERATOR_MODEL = "gemini/gemini-3.5-flash-lite"
+MODERATOR_MODEL = "gemini/gemini-1.5-flash"
 
 def query_model(agent_name, model_id, prompt, is_moderator=False, max_retries=5):
     if is_moderator:
@@ -25,7 +25,7 @@ def query_model(agent_name, model_id, prompt, is_moderator=False, max_retries=5)
         {"role": "user", "content": prompt}
     ]
     
-    kwargs = {"model": model_id, "messages": messages, "timeout": 45}
+    kwargs = {"model": model_id, "messages": messages, "timeout": 90}
     if is_moderator and "gemini" in model_id.lower():
         kwargs["tools"] = [{"googleSearch": {}}]
         
