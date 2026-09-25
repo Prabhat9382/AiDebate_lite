@@ -35,15 +35,32 @@ def query_model(agent_name, model_id, prompt, is_moderator=False, max_retries=5)
             response = completion(**kwargs)
             msg = response.choices[0].message
             content = msg.content or getattr(msg, 'reasoning_content', None) or getattr(msg, 'reasoning', None)
-            return agent_name, content or "[Empty response]"
+            return agent_name, content or "[Empty response]", kwargs["model"]
         except Exception as e:
             last_error_msg = str(e)
+            
+            # --- NEW GRACEFUL FALLBACK LOGIC ---
+            if "429" in last_error_msg and is_moderator:
+                fallback_kwargs = kwargs.copy()
+                fallback_kwargs["model"] = "groq/openai/gpt-oss-120b"
+                if "tools" in fallback_kwargs:
+                    del fallback_kwargs["tools"] # Remove search tool since Groq can't use it
+                try:
+                    fallback_response = completion(**fallback_kwargs)
+                    fallback_msg = fallback_response.choices[0].message
+                    content = fallback_msg.content or getattr(fallback_msg, 'reasoning_content', None) or getattr(fallback_msg, 'reasoning', None)
+                    if content:
+                        return agent_name, content + "\n\n*(Note: Fact-checking disabled due to quota limits)*", fallback_kwargs["model"]
+                except Exception as fallback_e:
+                    pass # If fallback also fails, let the normal retry logic handle it
+            # -----------------------------------
+
             if any(err in last_error_msg.lower() for err in ["503", "429", "timeout", "connection"]):
                 time.sleep(5 + (attempt * 5))
             else:
-                return agent_name, f"[API Error: {last_error_msg}]"
+                return agent_name, f"[API Error: {last_error_msg}]", model_id
                 
-    return agent_name, f"[API Error: Failed after 5 retries. Last error: {last_error_msg}]"
+    return agent_name, f"[API Error: Failed after 5 retries. Last error: {last_error_msg}]", model_id
 
 # UI Setup
 st.set_page_config(page_title="AI Roundtable", page_icon="🤖", layout="centered")
@@ -72,7 +89,7 @@ def run_live_round(prompt, round_title):
         st.markdown(f"### {round_title}")
         for name, model in SPOKE_MODELS.items():
             with st.spinner(f"⏳ {name} is typing..."):
-                _, content = query_model(name, model, prompt, is_moderator=False)
+                _, content, _ = query_model(name, model, prompt, is_moderator=False)
                 results[name] = content
                 st.markdown(f"**[{name}]**\n\n{content}")
                 st.divider()
@@ -81,6 +98,12 @@ def run_live_round(prompt, round_title):
                 
     st.session_state.history.append({"role": "assistant", "content": combined_output})
     return results
+
+def get_author_label(model_id):
+    if "gemini" in model_id.lower():
+        return "🤖 Gemini 3.5 Flash Lite (with Live Search)"
+    else:
+        return "⚡ Groq GPT-OSS-120B (Fallback - No Search)"
 
 # Main Logic
 if not st.session_state.topic:
@@ -107,12 +130,15 @@ elif not st.session_state.final_verdict:
                 synthesis_prompt += f"- {stance_labels[i]}: {arg}\n\n"
                 
             synthesis_prompt += "\nTask: Act as an objective synthesis engine. Evaluate the stances blindly based purely on evidence. Output a structured summary: 1. Core Agreements 2. Fact-Check & Discrepancies (Call out false claims) 3. Conditional Synthesis 4. Unverified Variables."
-            _, verdict = query_model("Moderator", MODERATOR_MODEL, synthesis_prompt, is_moderator=True)
+            _, verdict, actual_model = query_model("Moderator", MODERATOR_MODEL, synthesis_prompt, is_moderator=True)
             
-            st.markdown(f"### ⚖️ Collective Verdict\n{verdict}")
-            st.session_state.history.append({"role": "assistant", "content": f"### ⚖️ Collective Verdict\n{verdict}"})
+            author_label = get_author_label(actual_model)
+            final_display = f"### ⚖️ Collective Verdict\n*(Written by {author_label})*\n\n{verdict}"
             
-    st.session_state.final_verdict = verdict
+            st.markdown(final_display)
+            st.session_state.history.append({"role": "assistant", "content": final_display})
+            
+    st.session_state.final_verdict = final_display
     st.rerun()
 
 else:
@@ -132,10 +158,13 @@ else:
                     new_synth_prompt += f"- {stance_labels[i]}: {arg}\n\n"
                     
                 new_synth_prompt += "\nTask: Act as an objective synthesis engine. Output an updated collective verdict that incorporates the verified facts from the human's input."
-                _, new_verdict = query_model("Moderator", MODERATOR_MODEL, new_synth_prompt, is_moderator=True)
+                _, new_verdict, actual_model = query_model("Moderator", MODERATOR_MODEL, new_synth_prompt, is_moderator=True)
                 
-                st.markdown(f"### ⚖️ Updated Collective Verdict\n{new_verdict}")
-                st.session_state.history.append({"role": "assistant", "content": f"### ⚖️ Updated Collective Verdict\n{new_verdict}"})
+                author_label = get_author_label(actual_model)
+                new_final_display = f"### ⚖️ Updated Collective Verdict\n*(Written by {author_label})*\n\n{new_verdict}"
                 
-        st.session_state.final_verdict = new_verdict
+                st.markdown(new_final_display)
+                st.session_state.history.append({"role": "assistant", "content": new_final_display})
+                
+        st.session_state.final_verdict = new_final_display
         st.rerun()
