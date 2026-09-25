@@ -8,11 +8,11 @@ os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
 os.environ["GROQ_API_KEY"] = st.secrets["GROQ_API_KEY"]
 
 SPOKE_MODELS = {
-    "Gemini": "gemini/gemini-3.5-flash-lite",                 
     "Groq_Fast": "groq/openai/gpt-oss-20b",                        
-    "Groq_Large": "groq/openai/gpt-oss-120b"          
+    "Groq_Large": "groq/openai/gpt-oss-120b",
+    "Gemini": "gemini/gemini-3.5-flash-lite" # Gemini is just a debater now
 }
-MODERATOR_MODEL = "gemini/gemini-3.5-flash-lite"
+MODERATOR_MODEL = "groq/llama-3.3-70b-versatile"
 
 def query_model(agent_name, model_id, prompt, is_moderator=False, max_retries=5):
     if is_moderator:
@@ -151,20 +151,33 @@ else:
         feedback_results = run_live_round(feedback_prompt, "🔄 Models Evaluating Feedback")
             
         with st.chat_message("assistant"):
-            with st.spinner("⚖️ Moderator is fact-checking & synthesizing updated verdict..."):
-                new_synth_prompt = f"Topic: {st.session_state.topic}\nHuman's Argument: {user_input}\nModels' Responses:\n"
-                stance_labels = ["Stance A", "Stance B", "Stance C"]
-                for i, (model_name, arg) in enumerate(feedback_results.items()):
-                    new_synth_prompt += f"- {stance_labels[i]}: {arg}\n\n"
-                    
-                new_synth_prompt += "\nTask: Act as an objective synthesis engine. Output an updated collective verdict that incorporates the verified facts from the human's input."
-                _, new_verdict, actual_model = query_model("Moderator", MODERATOR_MODEL, new_synth_prompt, is_moderator=True)
+        with st.spinner("⚖️ Moderator is searching the web and synthesizing..."):
+            
+            # --- FREE LIVE WEB SEARCH ---
+            try:
+                from duckduckgo_search import DDGS
+                search_results = DDGS().text(st.session_state.topic, max_results=4)
+                live_facts = "\n".join([f"- {res['body']}" for res in search_results])
+            except:
+                live_facts = "No live web data available."
+            # ----------------------------
+
+            synthesis_prompt = f"Topic: {st.session_state.topic}\n"
+            synthesis_prompt += f"Live Web Facts: {live_facts}\n\nRound 2 Arguments:\n"
+            
+            stance_labels = ["Stance A", "Stance B", "Stance C"]
+            for i, (model_name, arg) in enumerate(r2_results.items()):
+                synthesis_prompt += f"- {stance_labels[i]}: {arg}\n\n"
                 
-                author_label = get_author_label(actual_model)
-                new_final_display = f"### ⚖️ Updated Collective Verdict\n*(Written by {author_label})*\n\n{new_verdict}"
-                
-                st.markdown(new_final_display)
-                st.session_state.history.append({"role": "assistant", "content": new_final_display})
+            synthesis_prompt += "\nTask: Act as an objective synthesis engine. Cross-check the Stances against the Live Web Facts provided. Discard fabricated specs. Output a structured summary: 1. Core Agreements 2. Fact-Check & Discrepancies 3. Conditional Synthesis."
+            
+            # Groq Llama 3 70B writes the final verdict using the injected web facts!
+            _, verdict, actual_model = query_model("Moderator", MODERATOR_MODEL, synthesis_prompt, is_moderator=True)
+            
+            final_display = f"### ⚖️ Collective Verdict\n*(Written by ⚡ Groq Llama-3.3-70B with Live DuckDuckGo Search)*\n\n{verdict}"
+            
+            st.markdown(final_display)
+            st.session_state.history.append({"role": "assistant", "content": final_display})
                 
         st.session_state.final_verdict = new_final_display
         st.rerun()
