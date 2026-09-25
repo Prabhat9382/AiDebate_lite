@@ -1,6 +1,7 @@
 import streamlit as st
 import os
 import time
+import json
 from litellm import completion
 
 # 1. Load Keys from Streamlit Secrets
@@ -15,17 +16,37 @@ SPOKE_MODELS = {
 MODERATOR_MODEL = "groq/openai/gpt-oss-120b"
 
 def fetch_web_facts(query):
-    """Fetches deep factual context using Tavily Search API, bypassing cloud IP blocks."""
+    """Safely fetch live web snippets. Now returns actual error text if blocked."""
     try:
-        from tavily import TavilyClient
-        client = TavilyClient(api_key=st.secrets["TAVILY_API_KEY"])
-        # Tavily handles conversational queries natively—no LLM middleman needed
-        response = client.search(query=query, search_depth="basic", max_results=3)
-        if response.get("results"):
-            return "\n\n".join([f"Source: {res['url']}\nContent: {res['content']}" for res in response["results"]])
+        from duckduckgo_search import DDGS
+        results = DDGS().text(query, max_results=4)
+        if results:
+            return "\n".join([f"- {res.get('body', '')}" for res in results])
     except Exception as e:
-        pass
+        return f"Search Error: {str(e)}"
     return "No live web data available."
+
+def generate_search_query(user_topic, human_input=""):
+    """Uses JSON Mode to mathematically force the LLM to output one clean search string."""
+    prompt = (
+        f"Topic: '{user_topic}'\nHuman input: '{human_input}'\n\n"
+        "Extract the core product names and technical keywords to fact-check this. "
+        "Output ONLY a valid JSON object with a single key 'query'. "
+        "Example: {\"query\": \"Sony HT-S40R vs Sony HT-S20R specifications\"}"
+    )
+    try:
+        # JSON output guarantees no extra text or glued queries
+        response = completion(
+            model="groq/openai/gpt-oss-20b",
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            timeout=15
+        )
+        return json.loads(response.choices[0].message.content)["query"]
+    except Exception:
+        # Safe string fallback
+        clean_fallback = user_topic.replace("?", "").replace("!", "")[:40].strip()
+        return f"{clean_fallback} specifications"
 
 def query_model(agent_name, model_id, prompt, is_moderator=False, max_retries=5):
     if is_moderator:
@@ -54,10 +75,10 @@ def query_model(agent_name, model_id, prompt, is_moderator=False, max_retries=5)
         except Exception as e:
             last_error_msg = str(e)
             
-            # Fallback to Groq 120B if rate-limited
+            # FIXED FALLBACK: Actually switch to a different model if rate-limited
             if "429" in last_error_msg and is_moderator:
                 fallback_kwargs = kwargs.copy()
-                fallback_kwargs["model"] = "groq/openai/gpt-oss-120b"
+                fallback_kwargs["model"] = "groq/llama3-8b-8192" 
                 try:
                     fallback_response = completion(**fallback_kwargs)
                     fallback_msg = fallback_response.choices[0].message
@@ -73,7 +94,6 @@ def query_model(agent_name, model_id, prompt, is_moderator=False, max_retries=5)
                 return agent_name, f"[API Error: {last_error_msg}]", model_id
                 
     return agent_name, f"[API Error: Failed after 5 retries. Last error: {last_error_msg}]", model_id
-
 
 # UI Setup
 st.set_page_config(page_title="AI Roundtable", page_icon="🤖", layout="centered")
@@ -111,11 +131,13 @@ def run_live_round(prompt, round_title):
 
 def get_author_label(model_id):
     if "gpt-oss-120b" in model_id.lower():
-        return "⚡ Groq GPT-OSS-120B (with Tavily Search API)"
+        return "⚡ Groq GPT-OSS-120B (with Agentic Web Search)"
+    elif "llama3" in model_id.lower():
+        return "⚡ Groq Llama 3 8B (Fallback)"
     elif "gemini" in model_id.lower():
         return "🤖 Gemini 3.5 Flash Lite"
     else:
-        return f"⚡ {model_id} (Fallback)"
+        return f"⚡ {model_id}"
 
 # Debate Execution
 if not st.session_state.topic:
@@ -136,8 +158,11 @@ elif not st.session_state.final_verdict:
     r2_results = run_live_round(round2_prompt, "⚔️ Round 2: Cross-Critique")
         
     with st.chat_message("assistant"):
-        with st.spinner(f"⚖️ Moderator is fact-checking '{st.session_state.topic}' & synthesizing..."):
-            live_facts = fetch_web_facts(st.session_state.topic)
+        with st.spinner("🔍 Agent is extracting clean search keywords..."):
+            smart_query = generate_search_query(st.session_state.topic)
+            
+        with st.spinner(f"⚖️ Moderator is fact-checking '{smart_query}' & synthesizing..."):
+            live_facts = fetch_web_facts(smart_query)
             
             synthesis_prompt = f"Topic: {st.session_state.topic}\nLive Web Facts:\n{live_facts}\n\nRound 2 Arguments:\n"
             stance_labels = ["Stance A", "Stance B", "Stance C"]
@@ -148,7 +173,7 @@ elif not st.session_state.final_verdict:
             _, verdict, actual_model = query_model("Moderator", MODERATOR_MODEL, synthesis_prompt, is_moderator=True)
             
             author_label = get_author_label(actual_model)
-            final_display = f"### ⚖️ Collective Verdict\n*(Written by {author_label})*\n\n{verdict}"
+            final_display = f"### ⚖️ Collective Verdict\n*(Written by {author_label})*\n\n**🔍 Search Query Used:** `{smart_query}`\n\n{verdict}"
             
             st.markdown(final_display)
             st.session_state.history.append({"role": "assistant", "content": final_display})
@@ -167,9 +192,11 @@ else:
         feedback_results = run_live_round(feedback_prompt, "🔄 Models Evaluating Feedback")
             
         with st.chat_message("assistant"):
+            with st.spinner("🔍 Agent is extracting clean search keywords..."):
+                smart_query = generate_search_query(st.session_state.topic, user_input)
+                
             with st.spinner(f"⚖️ Moderator is searching web & updating verdict..."):
-                search_query = f"{st.session_state.topic} {user_input}"
-                live_facts = fetch_web_facts(search_query)
+                live_facts = fetch_web_facts(smart_query)
                 
                 new_synth_prompt = f"Topic: {st.session_state.topic}\nHuman's Argument: {user_input}\nLive Web Facts:\n{live_facts}\n\nModels' Responses:\n"
                 stance_labels = ["Stance A", "Stance B", "Stance C"]
@@ -180,7 +207,7 @@ else:
                 _, new_verdict, actual_model = query_model("Moderator", MODERATOR_MODEL, new_synth_prompt, is_moderator=True)
                 
                 author_label = get_author_label(actual_model)
-                updated_display = f"### ⚖️ Updated Collective Verdict\n*(Written by {author_label})*\n\n{new_verdict}"
+                updated_display = f"### ⚖️ Updated Collective Verdict\n*(Written by {author_label})*\n\n**🔍 Search Query Used:** `{smart_query}`\n\n{new_verdict}"
                 
                 st.markdown(updated_display)
                 st.session_state.history.append({"role": "assistant", "content": updated_display})
